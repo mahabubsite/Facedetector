@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Advanced Face Detection App</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Inter font -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f0f4f8; /* Light blue-gray background */
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            padding: 1rem;
+            box-sizing: border-box;
+        }
+        .container {
+            background-color: #ffffff;
+            border-radius: 1.5rem; /* More rounded corners */
+            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04); /* Deeper shadow */
+            padding: 2rem;
+            width: 100%;
+            max-width: 900px; /* Max width for larger screens */
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 1.5rem;
+        }
+        .video-container {
+            position: relative;
+            width: 100%;
+            max-width: 640px; /* Max width for video */
+            border-radius: 1rem;
+            overflow: hidden;
+            background-color: #000;
+        }
+        video {
+            width: 100%;
+            height: auto;
+            display: block;
+            border-radius: 1rem;
+        }
+        canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            border-radius: 1rem;
+        }
+        .message-box {
+            background-color: #fff3cd;
+            color: #856404;
+            border: 1px solid #ffeeba;
+            border-radius: 0.5rem;
+            padding: 1rem;
+            margin-top: 1rem;
+            text-align: center;
+            width: 100%;
+            max-width: 400px;
+            display: none; /* Hidden by default */
+        }
+        .loading-spinner {
+            border: 4px solid rgba(0, 0, 0, 0.1);
+            border-left-color: #3b82f6; /* Blue spinner */
+            border-radius: 50%;
+            width: 24px;
+            height: 24px;
+            animation: spin 1s linear infinite;
+            display: none; /* Hidden by default */
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        /* Responsive adjustments */
+        @media (min-width: 640px) {
+            .container {
+                flex-direction: row;
+                justify-content: space-around;
+                align-items: flex-start;
+                gap: 2rem;
+            }
+            .video-container {
+                width: 60%; /* Adjust as needed for side-by-side layout */
+            }
+            .controls {
+                width: 35%; /* Adjust as needed */
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Logo -->
+        <img src="logo.png" alt="App Logo" class="w-32 h-auto mb-4 rounded-lg shadow-md">
+
+        <h1 class="text-3xl font-bold text-gray-800 text-center w-full">Real-time Face Detection</h1>
+        <!-- Short message/tagline -->
+        <p class="text-gray-600 text-lg text-center mb-4">আর নয় আপনার লিঙ্গ নিয়ে চিন্তা</p>
+
+        <div id="message-box" class="message-box"></div>
+
+        <div class="video-container">
+            <video id="video" autoplay muted></video>
+            <canvas id="overlay"></canvas>
+        </div>
+
+        <div class="controls flex flex-col items-center gap-4 w-full">
+            <button id="start-button" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-full shadow-lg transition duration-300 ease-in-out transform hover:scale-105">
+                Start Camera
+            </button>
+            <button id="switch-camera-button" class="bg-gray-600 hover:bg-gray-700 text-white font-bold py-3 px-6 rounded-full shadow-lg transition duration-300 ease-in-out transform hover:scale-105 mt-2" style="display: none;">
+                Switch Camera
+            </button>
+            <div id="loading-indicator" class="loading-spinner"></div>
+            <p id="status-message" class="text-gray-600 text-sm text-center"></p>
+        </div>
+    </div>
+
+    <!-- Face-API.js CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
+
+    <script>
+        const video = document.getElementById('video');
+        const overlay = document.getElementById('overlay');
+        const startButton = document.getElementById('start-button');
+        const switchCameraButton = document.getElementById('switch-camera-button');
+        const loadingIndicator = document.getElementById('loading-indicator');
+        const statusMessage = document.getElementById('status-message');
+        const messageBox = document.getElementById('message-box');
+
+        let displaySize = { width: 0, height: 0 };
+        let currentStream = null; // To hold the current MediaStream
+        let videoInputDevices = []; // To store available camera devices
+        let currentDeviceIndex = 0; // Index of the currently active camera
+
+        // Function to show a message in the message box
+        function showMessage(message, type = 'warning') {
+            messageBox.textContent = message;
+            messageBox.style.display = 'block';
+            if (type === 'error') {
+                messageBox.style.backgroundColor = '#f8d7da';
+                messageBox.style.borderColor = '#f5c6cb';
+                messageBox.style.color = '#721c24';
+            } else if (type === 'info') {
+                messageBox.style.backgroundColor = '#d1ecf1';
+                messageBox.style.borderColor = '#bee5eb';
+                messageBox.style.color = '#0c5460';
+            }
+            else {
+                messageBox.style.backgroundColor = '#fff3cd';
+                messageBox.style.borderColor = '#ffeeba';
+                messageBox.style.color = '#856404';
+            }
+        }
+
+        // Function to hide the message box
+        function hideMessage() {
+            messageBox.style.display = 'none';
+        }
+
+        // Enumerate available camera devices
+        async function enumerateCameras() {
+            try {
+                const devices = await navigator.mediaDevices.enumerateDevices();
+                videoInputDevices = devices.filter(device => device.kind === 'videoinput');
+
+                if (videoInputDevices.length > 1) {
+                    switchCameraButton.style.display = 'block'; // Show button if multiple cameras
+                } else {
+                    switchCameraButton.style.display = 'none'; // Hide if only one or no camera
+                }
+                statusMessage.textContent = `Found ${videoInputDevices.length} camera(s).`;
+            } catch (error) {
+                console.error('Error enumerating devices:', error);
+                showMessage('Could not enumerate cameras. Please ensure camera access is granted. ' + error.message, 'error');
+            }
+        }
+
+        // Load all necessary models
+        async function loadModels() {
+            statusMessage.textContent = 'Loading models... This might take a moment.';
+            loadingIndicator.style.display = 'block';
+            try {
+                // Load models from CDN
+                const MODEL_URL = 'https://cdn.jsdelivr.net/gh/justadudewhohacks/face-api.js@0.22.2/weights'; // Correct CDN path for models
+                await Promise.all([
+                    faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
+                    faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
+                    faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL),
+                    faceapi.nets.faceExpressionNet.loadFromUri(MODEL_URL),
+                    faceapi.nets.ageGenderNet.loadFromUri(MODEL_URL)
+                ]);
+                statusMessage.textContent = 'Models loaded successfully!';
+                hideMessage();
+                startButton.disabled = false; // Enable start button after models load
+            } catch (error) {
+                console.error('Error loading models:', error);
+                showMessage('Failed to load models. Please check your internet connection or try again later. ' + error.message, 'error');
+                statusMessage.textContent = 'Error loading models.';
+            } finally {
+                loadingIndicator.style.display = 'none';
+            }
+        }
+
+        // Start video stream from webcam
+        async function startVideo(deviceId = undefined) {
+            // Stop existing stream if any
+            if (currentStream) {
+                currentStream.getTracks().forEach(track => track.stop());
+            }
+
+            try {
+                const constraints = {
+                    video: {
+                        deviceId: deviceId ? { exact: deviceId } : undefined,
+                        // Prefer 'user' (front camera) if no specific deviceId is given,
+                        // otherwise, it will use the specified device.
+                        facingMode: deviceId ? undefined : 'user'
+                    }
+                };
+                currentStream = await navigator.mediaDevices.getUserMedia(constraints);
+                video.srcObject = currentStream;
+                hideMessage(); // Hide any previous error messages
+                statusMessage.textContent = 'Webcam started. Detecting faces...';
+            } catch (err) {
+                console.error('Error accessing webcam:', err);
+                showMessage('Could not start webcam. Please ensure camera access is granted and no other application is using it. ' + err.message, 'error');
+                statusMessage.textContent = 'Webcam access denied or failed.';
+                startButton.disabled = false; // Re-enable start button on failure
+            }
+        }
+
+        // Function to switch between available cameras
+        async function switchCamera() {
+            if (videoInputDevices.length > 1) {
+                currentDeviceIndex = (currentDeviceIndex + 1) % videoInputDevices.length;
+                const nextDeviceId = videoInputDevices[currentDeviceIndex].deviceId;
+                statusMessage.textContent = `Switching to camera: ${videoInputDevices[currentDeviceIndex].label || 'Unknown Camera'}`;
+                await startVideo(nextDeviceId);
+            } else {
+                showMessage('No other cameras found to switch to.', 'info');
+            }
+        }
+
+        // Event listener for when the video starts playing
+        video.addEventListener('play', () => {
+            // Match canvas dimensions to video dimensions
+            displaySize = { width: video.videoWidth, height: video.videoHeight };
+            faceapi.matchDimensions(overlay, displaySize);
+
+            // Set up interval for face detection
+            setInterval(async () => {
+                // Detect faces with all relevant features
+                const detections = await faceapi.detectAllFaces(
+                    video,
+                    new faceapi.TinyFaceDetectorOptions()
+                )
+                .withFaceLandmarks()
+                .withFaceExpressions()
+                .withAgeAndGender();
+
+                // Resize detections to fit the display size
+                const resizedDetections = faceapi.resizeResults(detections, displaySize);
+
+                // Clear canvas before drawing new detections
+                overlay.getContext('2d').clearRect(0, 0, overlay.width, overlay.height);
+
+                // Draw detections
+                faceapi.draw.drawDetections(overlay, resizedDetections);
+                faceapi.draw.drawFaceLandmarks(overlay, resizedDetections);
+                // faceapi.draw.drawFaceExpressions(overlay, resizedDetections); // Drawing expressions directly is less clear
+
+                // Draw age, gender, and dominant expression
+                resizedDetections.forEach(detection => {
+                    const box = detection.detection.box;
+
+                    // Age and Gender
+                    const age = Math.round(detection.age);
+                    const gender = detection.gender;
+
+                    // Expressions: Find the dominant one
+                    const expressions = detection.expressions;
+                    const sortedExpressions = Object.keys(expressions).sort((a, b) => expressions[b] - expressions[a]);
+                    const dominantExpression = sortedExpressions[0];
+                    const expressionScore = expressions[dominantExpression];
+
+                    // Prepare text lines for drawing
+                    const textLines = [
+                        `Age: ${age} years`,
+                        `Gender: ${gender}`,
+                        `Expr: ${dominantExpression} (${(expressionScore * 100).toFixed(0)}%)`
+                    ];
+
+                    // Draw text field
+                    new faceapi.draw.DrawTextField(
+                        textLines,
+                        box.bottomLeft
+                    ).draw(overlay);
+                });
+
+            }, 100); // Run detection every 100ms
+        });
+
+        // Event listener for start button click
+        startButton.addEventListener('click', async () => {
+            startButton.disabled = true; // Disable button once clicked
+            statusMessage.textContent = 'Starting webcam...';
+            // Start video with the first detected camera, or default
+            if (videoInputDevices.length > 0) {
+                await startVideo(videoInputDevices[currentDeviceIndex].deviceId);
+            } else {
+                await startVideo(); // Let browser choose default camera
+            }
+        });
+
+        // Event listener for switch camera button click
+        switchCameraButton.addEventListener('click', switchCamera);
+
+        // Initial load: disable buttons, enumerate cameras, then load models
+        startButton.disabled = true;
+        switchCameraButton.disabled = true; // Disable switch button until video starts
+        enumerateCameras().then(() => {
+            loadModels().then(() => {
+                // Enable switch camera button only if there's more than one camera
+                if (videoInputDevices.length > 1) {
+                    switchCameraButton.disabled = false;
+                }
+            });
+        });
+
+
+        // Handle window resize to adjust canvas
+        window.addEventListener('resize', () => {
+            if (video.readyState === 4) { // Check if video is ready
+                displaySize = { width: video.videoWidth, height: video.videoHeight };
+                faceapi.matchDimensions(overlay, displaySize);
+            }
+        });
+
+        // Cleanup on page unload (optional but good practice)
+        window.addEventListener('beforeunload', () => {
+            if (currentStream) {
+                currentStream.getTracks().forEach(track => track.stop());
+            }
+        });
+    </script>
+</body>
+</html>
